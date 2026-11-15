@@ -1,6 +1,7 @@
 /*
  * app.js — экраны приложения: показывает данные и реагирует на нажатия.
- * Все формулы — в logic.js. Данные хранятся в браузере (localStorage) на этом устройстве.
+ * Все формулы — в logic.js. Данные хранятся в общей облачной базе (sync.js),
+ * поэтому всё, что вносит один член семьи, сразу видит другой.
  */
 (function () {
   'use strict';
@@ -8,27 +9,45 @@
   const STORAGE_KEY = 'finplaner-v1';
   const main = document.getElementById('main');
 
-  /* ---------- Хранение ---------- */
+  /* ---------- Облачная база ---------- */
 
-  let storageOk = true;
-  function load() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) return L.normalizeState(JSON.parse(raw));
-    } catch (e) { storageOk = false; }
-    return L.emptyState();
-  }
-  function save() {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-      storageOk = true;
-    } catch (e) {
-      storageOk = false;
-      toast('Не удалось сохранить в браузере. Сделайте резервную копию в разделе «Ещё».');
-    }
+  // mode: setup (база не подключена) | loading | login | denied | app
+  let mode = 'loading';
+  let cloud = null;
+  let user = null;
+  let errorText = '';
+  let state = L.emptyState();
+
+  function startCloud() {
+    const config = window.FIREBASE_CONFIG;
+    if (!config || !config.apiKey) { mode = 'setup'; render(); return; }
+    import('./sync.js').then(mod => {
+      cloud = mod.createSync(config, {
+        onAuth(u) {
+          user = u;
+          mode = u ? 'loading' : 'login';
+          render();
+        },
+        onData(raw, complete) {
+          state = L.stateFromCloud(raw);
+          if (complete && mode === 'loading') mode = 'app';
+          if (mode === 'app') renderKeepingInput();
+        },
+        onError(kind, err) {
+          console.error(err);
+          if (kind === 'denied') { mode = 'denied'; render(); }
+          else if (kind === 'login') toast('Не получилось войти: ' + ((err && err.code) || 'ошибка'));
+          else toast('Не удалось сохранить в базе. Проверьте интернет.');
+        },
+      });
+    }).catch(err => {
+      console.error(err);
+      mode = 'setup';
+      errorText = 'Не загрузились файлы Firebase. Проверьте интернет и обновите страницу.';
+      render();
+    });
   }
 
-  let state = load();
   const today = new Date();
   const ui = {
     tab: 'overview',
@@ -187,7 +206,7 @@
       const info = isInc ? { category: L.incomeCategory(state, e.item), group: 'Поступления' } : L.itemInfo(state, e.item);
       return `<li class="entry${e.id === ui.editId ? ' editing' : ''}">
         <div class="entry-main"><div class="entry-title">${esc(e.item)}</div>
-          <div class="entry-meta">${isInc ? '' : `<span class="tag">${esc(info.group)}</span>`}${esc(info.category)} · ${dateLabel(e.date)}${e.note ? ' · ' + esc(e.note) : ''}</div></div>
+          <div class="entry-meta">${isInc ? '' : `<span class="tag">${esc(info.group)}</span>`}${esc(info.category)} · ${dateLabel(e.date)}${e.note ? ' · ' + esc(e.note) : ''}${e.by ? ' · <b>' + esc(e.by) + '</b>' : ''}</div></div>
         <div class="entry-amount ${isInc ? 'pos' : ''}">${money(e.amount)}</div>
         <div class="entry-actions">
           <button type="button" class="btn btn-small" data-edit="${esc(e.id)}" aria-label="Изменить: ${esc(e.item)}, ${money(e.amount)}">Изм.</button>
@@ -251,7 +270,7 @@
     L.ensureMonth(state, target)[key].push(entry);
     const wasEdit = !!ui.editId;
     ui.editId = null;
-    save();
+    cloud.saveEntry(ui.kind, entry);
     if (target !== ui.ym) toast(`Сохранено в ${L.ymLabel(target).toLowerCase()}`);
     else toast(wasEdit ? 'Запись изменена' : 'Запись добавлена');
     render();
@@ -313,7 +332,6 @@
     if (n === null) {
       L.ensureMonth(state, ui.ym).savings[input.dataset.sav] = null;
       document.getElementById('cap-total').textContent = money(L.monthSummary(state, ui.ym).savings.capital);
-      save();
       return;
     }
     if (!Number.isFinite(n) || n < 0) { input.setAttribute('aria-invalid', 'true'); return; }
@@ -329,7 +347,19 @@
       m.savings[input.dataset.sav] = n;
       document.getElementById('cap-total').textContent = money(L.monthSummary(state, ui.ym).savings.capital);
     }
-    save();
+  }
+
+  /** Отправляем поле плана в базу, когда человек закончил ввод (ушёл с поля). */
+  function commitPlanInput(input) {
+    if (input.getAttribute('aria-invalid')) return;
+    const m = L.ensureMonth(state, ui.ym);
+    if (input.dataset.planGroup) {
+      const g = input.dataset.planGroup, c = input.dataset.planCat;
+      cloud.setPlan(ui.ym, g, c, m.plan[g][c] || 0);
+    } else if (input.dataset.sav) {
+      const v = m.savings[input.dataset.sav];
+      cloud.setSaving(ui.ym, input.dataset.sav, v === undefined ? null : v);
+    }
   }
 
   function copyPlan() {
@@ -337,7 +367,7 @@
     if (!prev) { toast('В прошлом месяце нет плана'); return; }
     const m = L.ensureMonth(state, ui.ym);
     m.plan = JSON.parse(JSON.stringify(prev.plan));
-    save();
+    cloud.replaceMonth(ui.ym, m.plan, m.savings);
     render();
     toast('План скопирован');
   }
@@ -424,17 +454,25 @@
       </section>
 
       <section class="section">
+        <h2>Аккаунт</h2>
+        <div class="card">
+          <p class="small" style="margin-top:0">Вы вошли как <b>${esc((user && (user.displayName || user.email)) || '')}</b>${user && user.displayName ? ' (' + esc(user.email) + ')' : ''}.
+          Записи хранятся в общей базе и видны только вам двоим.</p>
+          <button type="button" class="btn" id="sign-out">Выйти</button>
+        </div>
+      </section>
+
+      <section class="section">
         <h2>Резервная копия</h2>
         <div class="card">
-          <p class="small" style="margin-top:0">Данные хранятся только в этом браузере на этом устройстве.
-          Сохраните копию в файл, чтобы не потерять записи или перенести их на телефон.</p>
-          ${storageOk ? '' : '<p class="error">Браузер не даёт сохранять данные (например, в режиме инкогнито). Обязательно сохраните копию.</p>'}
+          <p class="small" style="margin-top:0">На всякий случай можно сохранить все данные в файл.
+          Если раньше вы вносили записи без входа, загрузите сюда их копию — они попадут в общую базу.</p>
           <div class="form-actions" style="flex-wrap:wrap">
             <button type="button" class="btn btn-primary" id="export">Сохранить копию в файл</button>
             <label class="btn" for="import" style="display:inline-flex;align-items:center">Загрузить из файла</label>
             <input type="file" id="import" accept="application/json,.json" class="visually-hidden">
           </div>
-          <p class="hint">Загрузка из файла заменит все текущие данные.</p>
+          <p class="hint">Загрузка из файла добавляет данные в общую базу, ничего не удаляя.</p>
         </div>
       </section>`;
   }
@@ -456,9 +494,8 @@
     else if (!category) msg = 'Выберите или впишите категорию.';
     else if (exists) msg = 'Такая статья уже есть.';
     if (msg) { err.textContent = msg; err.hidden = false; return; }
-    if (group === L.INCOME) state.customIncomeItems.push({ name, category });
-    else state.customItems.push({ name, category, group });
-    save();
+    if (group === L.INCOME) { state.customIncomeItems.push({ name, category }); cloud.addItem('customIncomeItems', { name, category }); }
+    else { state.customItems.push({ name, category, group }); cloud.addItem('customItems', { name, category, group }); }
     render();
     toast('Статья добавлена');
   }
@@ -479,11 +516,9 @@
     reader.onload = () => {
       try {
         const next = L.normalizeState(JSON.parse(reader.result));
-        if (!confirm('Заменить все текущие данные данными из файла?')) return;
-        state = next;
-        save();
-        render();
-        toast('Данные загружены');
+        const count = Object.values(next.months).reduce((s, m) => s + m.expenses.length + m.incomes.length, 0);
+        if (!confirm(`Загрузить из файла ${count} записей, план и накопления в общую базу? Записи с тем же номером будут обновлены.`)) return;
+        cloud.importState(next).then(() => toast('Данные загружены')).catch(() => toast('Не удалось загрузить данные'));
       } catch (e) {
         toast('Не получилось прочитать файл: это не копия планера.');
       }
@@ -495,10 +530,86 @@
 
   const views = { overview: renderOverview, entries: renderEntries, plan: renderPlan, year: renderYear, settings: renderSettings };
 
+  /* Записи, внесённые на этом устройстве ДО подключения общей базы (старая версия хранила их в браузере). */
+  function readLegacy() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      const s = L.normalizeState(JSON.parse(raw));
+      return Object.values(s.months).some(L.monthHasData) ? s : null;
+    } catch (e) { return null; }
+  }
+  function legacyBanner() {
+    const s = readLegacy();
+    if (!s) return '';
+    const count = Object.values(s.months).reduce((n, m) => n + m.expenses.length + m.incomes.length, 0);
+    return `<div class="card section"><p style="margin-top:0"><b>На этом устройстве есть записи, внесённые до подключения общей базы</b> (${count} шт.).</p>
+      <p class="muted small">Перенесите их, чтобы их видели вы оба.</p>
+      <button type="button" class="btn btn-primary" id="move-legacy">Перенести в общую базу</button></div>`;
+  }
+  function moveLegacy() {
+    const s = readLegacy();
+    if (!s) return;
+    cloud.importState(s).then(() => {
+      try {
+        // Не удаляем, а откладываем в сторону — на всякий случай.
+        localStorage.setItem(STORAGE_KEY + '-moved', localStorage.getItem(STORAGE_KEY));
+        localStorage.removeItem(STORAGE_KEY);
+      } catch (e) { /* не важно */ }
+      toast('Записи перенесены в общую базу');
+      render();
+    }).catch(() => toast('Не удалось перенести. Проверьте интернет.'));
+  }
+
+  /** Экраны до входа: «не подключено», «загрузка», «войдите», «нет доступа». */
+  function renderGate() {
+    if (mode === 'setup') {
+      return `<div class="card empty"><p><b>Приложение ещё не подключено к общей базе.</b></p>
+        <p class="muted small">${esc(errorText || 'Нужно вписать настройки Firebase в файл firebase-config.js.')}</p></div>`;
+    }
+    if (mode === 'loading') {
+      return '<div class="card empty" aria-busy="true"><p class="muted">Загружаю данные…</p></div>';
+    }
+    if (mode === 'denied') {
+      return `<div class="card empty"><p><b>Нет доступа</b></p>
+        <p class="muted small">Аккаунт ${esc(user ? user.email : '')} не входит в список семьи. Войдите другим Google-аккаунтом.</p>
+        <button type="button" class="btn" id="sign-out">Выйти</button></div>`;
+    }
+    return `<div class="card empty"><p><b>Семейный финансовый планер</b></p>
+      <p class="muted small">Войдите своим Google-аккаунтом. Доступ есть только у членов семьи.</p>
+      <button type="button" class="btn btn-primary" id="sign-in">Войти через Google</button></div>`;
+  }
+
   function render() {
+    const inApp = mode === 'app';
+    document.querySelector('.tabs').hidden = !inApp;
+    document.querySelector('.period').hidden = !inApp;
+    if (!inApp) { main.innerHTML = renderGate(); return; }
     renderHeader();
-    main.innerHTML = (views[ui.tab] || renderOverview)();
+    main.innerHTML = legacyBanner() + (views[ui.tab] || renderOverview)();
     if (ui.tab === 'settings') fillCats();
+  }
+
+  /**
+   * Перерисовка, когда пришли изменения от другого человека.
+   * Не мешаем тому, кто сейчас печатает: сохраняем введённое в форме и курсор.
+   */
+  function renderKeepingInput() {
+    const active = document.activeElement;
+    const activeId = active && main.contains(active) ? active.id : null;
+    const keep = {};
+    main.querySelectorAll('#entry-form input, #entry-form select, #item-form input, #item-form select').forEach(el => { keep[el.id] = el.value; });
+    if (activeId && active.matches('[data-plan-group], [data-sav]')) keep[activeId] = active.value;
+    const selStart = active && 'selectionStart' in active ? active.selectionStart : null;
+    render();
+    Object.keys(keep).forEach(id => { const el = document.getElementById(id); if (el) el.value = keep[id]; });
+    if (activeId) {
+      const el = document.getElementById(activeId);
+      if (el) {
+        el.focus();
+        try { if (selStart !== null) el.setSelectionRange(selStart, selStart); } catch (e) { /* поле без курсора */ }
+      }
+    }
   }
 
   function go(tab) {
@@ -525,6 +636,12 @@
   main.addEventListener('click', e => {
     const t = e.target.closest('button');
     if (!t) return;
+    if (t.id === 'sign-in') return cloud && cloud.signIn();
+    if (t.id === 'move-legacy') return moveLegacy();
+    if (t.id === 'sign-out') {
+      if (confirm('Выйти из аккаунта на этом устройстве?')) cloud.signOut();
+      return;
+    }
     if (t.dataset.go) return go(t.dataset.go);
     if (t.dataset.kind) { ui.kind = t.dataset.kind; ui.editId = null; return render(); }
     if (t.dataset.edit) {
@@ -542,7 +659,7 @@
       if (!entry || !confirm(`Удалить «${entry.item}» на ${money(entry.amount)}?`)) return;
       m[key] = m[key].filter(x => x.id !== entry.id);
       if (ui.editId === entry.id) ui.editId = null;
-      save();
+      cloud.deleteEntry(entry.id);
       render();
       toast('Запись удалена');
       return;
@@ -555,8 +672,8 @@
       const arr = inc ? state.customIncomeItems : state.customItems;
       const idx = Number(inc ? t.dataset.delIncItem : t.dataset.delItem);
       if (!arr[idx] || !confirm(`Удалить статью «${arr[idx].name}»? Старые записи останутся, но попадут в «${inc ? 'Прочие поступления' : L.OTHER}».`)) return;
-      arr.splice(idx, 1);
-      save();
+      const removed = arr.splice(idx, 1)[0];
+      cloud.removeItem(inc ? 'customIncomeItems' : 'customItems', removed);
       render();
     }
   });
@@ -570,7 +687,8 @@
     if (e.target.matches('[data-plan-group], [data-sav]')) onPlanInput(e.target);
   });
   main.addEventListener('change', e => {
-    if (e.target.id === 'currency') { state.currency = e.target.value; save(); toast('Валюта изменена'); }
+    if (e.target.id === 'currency') { state.currency = e.target.value; cloud.setCurrency(e.target.value); toast('Валюта изменена'); }
+    if (e.target.matches('[data-plan-group], [data-sav]')) commitPlanInput(e.target);
     if (e.target.id === 'ni-group') fillCats();
     if (e.target.id === 'import' && e.target.files[0]) { importData(e.target.files[0]); e.target.value = ''; }
   });
@@ -580,4 +698,5 @@
   });
 
   render();
+  startCloud();
 })();

@@ -5,3 +5,4 @@
 data.js
 .claude/
 .DS_Store
+firestore.rules
