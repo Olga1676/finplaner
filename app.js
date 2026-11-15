@@ -180,16 +180,17 @@
           <div class="kpi-sub">план ${money(s.income.plan)}</div></div>
         <div class="kpi kpi-spend"><div class="kpi-label">🛒 Траты</div><div class="kpi-value">${money(s.spent)}</div>
           <div class="kpi-sub">план ${money(s.spentPlan)}</div></div>
-        <div class="kpi kpi-balance"><div class="kpi-label">👛 Остаток месяца</div><div class="kpi-value ${s.balanceFact < 0 ? 'neg' : ''}">${money(s.balanceFact)}</div>
-          <div class="kpi-sub">поступления − траты</div></div>
+        <div class="kpi kpi-balance"><div class="kpi-label">💳 На карте сейчас</div><div class="kpi-value ${s.card.end < 0 ? 'neg' : ''}">${money(s.card.end)}</div>
+          <div class="kpi-sub">было на 1-е: ${money(s.card.start)} <button type="button" class="link-btn" data-go="plan">изменить</button></div></div>
         <div class="kpi kpi-save"><div class="kpi-label">🐷 Капитал и накопления</div><div class="kpi-value">${money(s.savings.capital)}</div>
-          <div class="kpi-sub">на конец месяца: ${money(s.endBalance)}</div></div>
+          <div class="kpi-sub">подушка, вклады, отложенное</div></div>
       </div>
 
       <div class="meter card">
         <div class="meter-head"><span>Потрачено от поступлений</span><b>${share === null ? '—' : pct(share)}</b></div>
         <div class="meter-track" role="img" aria-label="Потрачено ${share === null ? 'неизвестно' : pct(share)} от поступлений">
           <div class="meter-fill" style="width:${share === null ? 0 : Math.min(100, share * 100).toFixed(1)}%"></div></div>
+        <p class="hint">Остаток месяца (поступления − траты): <b>${money(s.balanceFact)}</b></p>
         <p class="hint">Платежи ${money(s.payments.fact)} · Расходы ${money(s.expenses.fact)} · Долги ${money(s.debts.fact)}</p>
       </div>
 
@@ -344,7 +345,17 @@
     return `
       <h2>План на ${L.ymLabel(ui.ym).toLowerCase()}</h2>
       <p class="muted small" style="margin-top:-6px">Впишите, сколько планируете получить и потратить. Факт считается сам из записей.</p>
-      <div style="margin-bottom:16px"><button type="button" class="btn" id="copy-plan">Скопировать план из${L.ymLabel(L.shiftYm(ui.ym, -1)).toLowerCase()}</button></div>
+      <div style="margin-bottom:16px"><button type="button" class="btn" id="copy-plan">Скопировать план из ${L.ymLabel(L.shiftYm(ui.ym, -1)).toLowerCase()}</button></div>
+      <div class="card section card-money"><h3>💳 Деньги на карте</h3>
+        <div class="plan-list">
+          <div class="plan-row"><label for="s-cardStart">Было на карте 1-го числа${s.card.carried ? '<span class="carry">перенесено с конца прошлого месяца</span>' : ''}</label>
+            <input class="input num" id="s-cardStart" inputmode="decimal" placeholder="${nf.format(s.card.start)}" data-sav="cardStart" value="${s.card.manual ? m.savings.cardStart : ''}"></div>
+          <div class="plan-row"><span>+ поступления</span><span class="num" style="text-align:right">${money(s.income.fact)}</span></div>
+          <div class="plan-row"><span>− траты</span><span class="num" style="text-align:right">${money(s.spent)}</span></div>
+        </div>
+        <div class="plan-total"><span>На карте сейчас</span><span id="card-total">${money(s.card.end)}</span></div>
+        <p class="hint">Впишите один раз, сколько было на карте 1-го числа. Дальше остаток считается сам и переходит в следующий месяц.</p>
+      </div>
       <div class="grid-2">${cards}
         <div class="card"><h3>Накопления</h3>
           <div class="plan-list">
@@ -360,12 +371,19 @@
 
   function onPlanInput(input) {
     const raw = input.value.trim();
-    const isBalance = L.BALANCE_KEYS.includes(input.dataset.sav);
+    const isBalance = L.NULLABLE_KEYS.includes(input.dataset.sav);
+    const updateTotals = () => {
+      const sum = L.monthSummary(state, ui.ym);
+      const cap = document.getElementById('cap-total');
+      const card = document.getElementById('card-total');
+      if (cap) cap.textContent = money(sum.savings.capital);
+      if (card) card.textContent = money(sum.card.end);
+    };
     // Пустое поле остатка = «брать из прошлого месяца».
     const n = raw === '' ? (isBalance ? null : 0) : parseAmount(raw);
     if (n === null) {
       L.ensureMonth(state, ui.ym).savings[input.dataset.sav] = null;
-      document.getElementById('cap-total').textContent = money(L.monthSummary(state, ui.ym).savings.capital);
+      updateTotals();
       return;
     }
     if (!Number.isFinite(n) || n < 0) { input.setAttribute('aria-invalid', 'true'); return; }
@@ -379,7 +397,7 @@
       if (el) el.textContent = money(total);
     } else if (input.dataset.sav) {
       m.savings[input.dataset.sav] = n;
-      document.getElementById('cap-total').textContent = money(L.monthSummary(state, ui.ym).savings.capital);
+      updateTotals();
     }
   }
 
@@ -483,6 +501,16 @@
       </section>
 
       <section class="section">
+        <h2>Установка на телефон</h2>
+        <div class="card small">
+          ${window.__installPrompt ? '<p style="margin-top:0"><button type="button" class="btn btn-primary" id="install-app">📲 Установить приложение</button></p>' : ''}
+          <p style="margin-top:0"><b>Android:</b> откройте планер в <b>Chrome</b> → меню <b>⋮</b> (три точки справа вверху) → <b>«Установить приложение»</b> или <b>«Добавить на главный экран»</b> → «Установить». Иконка появится в списке приложений и на рабочем столе.</p>
+          <p><b>iPhone:</b> откройте в <b>Safari</b> → кнопка «Поделиться» (квадрат со стрелкой) → <b>«На экран „Домой“»</b>.</p>
+          <p class="muted" style="margin-bottom:0">Если открыли ссылку из Telegram/WhatsApp, сначала нажмите «Открыть в браузере».</p>
+        </div>
+      </section>
+
+      <section class="section">
         <h2>Звуки</h2>
         <div class="card"><label class="switch-row" for="sound-toggle">
           <span>Звук при добавлении и удалении записей</span>
@@ -573,6 +601,28 @@
 
   const views = { overview: renderOverview, entries: renderEntries, plan: renderPlan, year: renderYear, settings: renderSettings };
 
+  /* Кнопка «Установить приложение» (Android/Chrome сам сообщает, когда это возможно). */
+  function installBanner() {
+    if (!window.__installPrompt || ui.installHidden) return '';
+    return `<div class="install-banner section">
+      <img src="icons/icon-192.png" alt="" class="install-icon">
+      <div class="install-text"><b>Установить планер на телефон</b><span>Иконка на экране, открывается как приложение и без интернета</span></div>
+      <button type="button" class="btn btn-primary" id="install-app">📲 Установить</button>
+      <button type="button" class="link-btn" id="install-later" aria-label="Скрыть предложение установить">✕</button>
+    </div>`;
+  }
+  async function installApp() {
+    const p = window.__installPrompt;
+    if (!p) return;
+    p.prompt();
+    const choice = await p.userChoice.catch(() => null);
+    window.__installPrompt = null;
+    render();
+    if (choice && choice.outcome === 'accepted') toast('Готово! Иконка появится на экране телефона');
+  }
+  window.addEventListener('planer-installable', () => { if (mode === 'app' || mode === 'login') render(); });
+  window.addEventListener('appinstalled', () => { window.__installPrompt = null; render(); });
+
   /* Записи, внесённые на этом устройстве ДО подключения общей базы (старая версия хранила их в браузере). */
   function readLegacy() {
     try {
@@ -627,9 +677,9 @@
     const inApp = mode === 'app';
     document.querySelector('.tabs').hidden = !inApp;
     document.querySelector('.period').hidden = !inApp;
-    if (!inApp) { main.innerHTML = renderGate(); return; }
+    if (!inApp) { main.innerHTML = (mode === 'login' ? installBanner() : '') + renderGate(); return; }
     renderHeader();
-    main.innerHTML = legacyBanner() + (views[ui.tab] || renderOverview)();
+    main.innerHTML = installBanner() + legacyBanner() + (views[ui.tab] || renderOverview)();
     if (ui.tab === 'settings') fillCats();
   }
 
@@ -681,6 +731,8 @@
     if (!t) return;
     if (t.id === 'sign-in') return cloud && cloud.signIn();
     if (t.id === 'move-legacy') return moveLegacy();
+    if (t.id === 'install-app') return installApp();
+    if (t.id === 'install-later') { ui.installHidden = true; return render(); }
     if (t.id === 'sign-out') {
       if (confirm('Выйти из аккаунта на этом устройстве?')) cloud.signOut();
       return;

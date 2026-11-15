@@ -5,7 +5,7 @@
  *
  * При каждом изменении файлов приложения увеличивайте VERSION — тогда телефоны скачают новую версию.
  */
-const VERSION = 'v1';
+const VERSION = 'v2';
 const CACHE = 'finplaner-' + VERSION;
 const FB = 'https://www.gstatic.com/firebasejs/10.14.1/';
 

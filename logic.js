@@ -82,6 +82,8 @@
   // Это ОСТАТКИ: вводятся один раз и сами переходят в следующие месяцы, пока их не изменят.
   // null = «в этом месяце не вводили, берём из прошлого».
   const BALANCE_KEYS = ['cushion', 'deposits', 'dividends', 'crypto'];
+  // Поля, которые могут быть «не заполнены» (null): остатки и «было на карте на начало месяца».
+  const NULLABLE_KEYS = BALANCE_KEYS.concat(['cardStart']);
 
   const OTHER = 'Другое';
 
@@ -116,7 +118,7 @@
   function emptyMonth() {
     return {
       plan: { 'Платежи': {}, 'Расходы': {}, 'Долги': {}, 'Поступления': {} },
-      savings: { current: 0, cushion: null, deposits: null, dividends: null, crypto: null },
+      savings: { current: 0, cushion: null, deposits: null, dividends: null, crypto: null, cardStart: null },
       expenses: [],
       incomes: [],
     };
@@ -205,7 +207,7 @@
       Object.keys(m.savings).forEach(k => {
         const v = src.savings ? src.savings[k] : null;
         const empty = v === null || v === undefined || v === '';
-        m.savings[k] = BALANCE_KEYS.includes(k) && empty ? null : Math.max(0, toNumber(v));
+        m.savings[k] = NULLABLE_KEYS.includes(k) && empty ? null : Math.max(0, toNumber(v));
       });
       m.expenses = (Array.isArray(src.expenses) ? src.expenses : []).map(normEntry).filter(Boolean);
       m.incomes = (Array.isArray(src.incomes) ? src.incomes : []).map(normEntry).filter(Boolean);
@@ -253,6 +255,27 @@
    * если в этом месяце вводили — берём их, иначе — из последнего прошлого месяца, где вводили.
    * carried[k] = true, если значение пришло из прошлого месяца.
    */
+  /**
+   * Деньги на карте.
+   *  start — сколько было на 1-е число: введено вручную или перенесено из конца прошлого месяца;
+   *  end   — сколько сейчас: start + поступления − все траты месяца.
+   */
+  function cardFor(state, ym) {
+    const flow = m => m.incomes.reduce((s, e) => s + e.amount, 0) - m.expenses.reduce((s, e) => s + e.amount, 0);
+    const own = k => {
+      const v = state.months[k] && state.months[k].savings.cardStart;
+      return v === null || v === undefined ? null : toNumber(v);
+    };
+    let bal = null;   // остаток на конец предыдущего месяца
+    Object.keys(state.months).filter(k => k < ym).sort().forEach(k => {
+      const start = own(k) !== null ? own(k) : (bal || 0);
+      bal = start + flow(state.months[k]);
+    });
+    const manual = own(ym) !== null;
+    const start = manual ? own(ym) : (bal || 0);
+    return { start, manual, carried: !manual && bal !== null, end: start + flow(getMonth(state, ym)) };
+  }
+
   function balancesFor(state, ym) {
     const values = {};
     const carried = {};
@@ -322,6 +345,7 @@
         capital,
       },
       endBalance: balanceFact + capital,
+      card: cardFor(state, ym),
       byCategory,
     };
   }
@@ -355,7 +379,7 @@
   }
 
   return {
-    MONTHS, GROUPS, INCOME, SAVINGS_FIELDS, BALANCE_KEYS, OTHER,
+    MONTHS, GROUPS, INCOME, SAVINGS_FIELDS, BALANCE_KEYS, NULLABLE_KEYS, OTHER,
     ymKey, parseYm, shiftYm, ymLabel, newId,
     emptyState, emptyMonth, getMonth, ensureMonth, monthHasData,
     allItems, allIncomeItems, categories, itemInfo, incomeCategory,

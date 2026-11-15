@@ -268,6 +268,25 @@ h3 { font-size: 1rem; margin: 0 0 10px; }
 .carry { display: block; font-size: 0.75rem; color: var(--accent-2); }
 .plan-total { display: flex; justify-content: space-between; font-weight: 700; padding-top: 10px; margin-top: 6px; border-top: 1px solid var(--border); }
 
+.link-btn { border: 0; background: none; padding: 0 2px; color: var(--accent); font-weight: 600; cursor: pointer; text-decoration: underline; font-size: inherit; }
+.card-money { background: linear-gradient(135deg, var(--k-bal), var(--surface) 70%); }
+
+.install-banner {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 12px; align-items: center;
+  padding: 12px 14px; border-radius: var(--radius); background: var(--surface);
+  border: 2px solid transparent; background-image: linear-gradient(var(--surface), var(--surface)), var(--grad);
+  background-origin: border-box; background-clip: padding-box, border-box; box-shadow: var(--shadow);
+}
+.install-icon { width: 44px; height: 44px; border-radius: 12px; }
+.install-text { display: grid; font-size: 0.82rem; color: var(--muted); }
+.install-text b { color: var(--text); font-size: 0.95rem; }
+.install-banner .link-btn { text-decoration: none; color: var(--muted); font-size: 1.1rem; }
+@media (max-width: 420px) {
+  .install-banner { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .install-banner .btn { grid-column: 1 / -1; }
+  .install-banner .link-btn { grid-column: 3; grid-row: 1; }
+}
+
 .empty { text-align: center; padding: 28px 12px; }
 .empty p { margin: 0 0 12px; }
 

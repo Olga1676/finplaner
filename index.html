@@ -39,6 +39,14 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+  <script>
+    // Android/Chrome сообщает, что приложение можно установить — запоминаем, чтобы показать свою кнопку.
+    window.addEventListener('beforeinstallprompt', e => {
+      e.preventDefault();
+      window.__installPrompt = e;
+      window.dispatchEvent(new Event('planer-installable'));
+    });
+  </script>
   <script src="firebase-config.js"></script>
   <script src="logic.js"></script>
   <script src="sounds.js"></script>
