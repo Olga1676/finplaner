@@ -115,6 +115,7 @@
     const s = L.monthSummary(state, ui.ym);
     if (!s.hasData) {
       return `<div class="card empty"><p><b>${L.ymLabel(ui.ym)}</b> — пока пусто.</p>
+        ${s.savings.capital > 0 ? `<p>Капитал и накопления: <b>${money(s.savings.capital)}</b></p>` : ''}
         <p class="muted small">Добавьте первую трату или поступление, а в разделе «План» задайте бюджет.</p>
         <button type="button" class="btn btn-primary" data-go="entries">Добавить запись</button></div>`;
     }
@@ -277,14 +278,20 @@
         `</div><div class="plan-total"><span>Итого</span><span data-total="${g}">${money(total)}</span></div></div>`;
     }).join('');
 
-    const sv = L.SAVINGS_FIELDS.map(([k, label]) =>
-      `<div class="plan-row"><label for="s-${k}">${label}</label>
-        <input class="input num" id="s-${k}" inputmode="decimal" placeholder="0" data-sav="${k}" value="${m.savings[k] || ''}"></div>`).join('');
+    const sv = L.SAVINGS_FIELDS.map(([k, label]) => {
+      const isBalance = L.BALANCE_KEYS.includes(k);
+      const own = m.savings[k];
+      const value = own === null || own === undefined || (!isBalance && !own) ? '' : own;
+      const carried = isBalance && s.savings.carried[k];
+      const ph = carried ? nf.format(s.savings[k]) : '0';
+      return `<div class="plan-row"><label for="s-${k}">${label}${carried ? '<span class="carry">из прошлого месяца</span>' : ''}</label>
+        <input class="input num" id="s-${k}" inputmode="decimal" placeholder="${ph}" data-sav="${k}" value="${value}"></div>`;
+    }).join('');
 
     return `
       <h2>План на ${L.ymLabel(ui.ym).toLowerCase()}</h2>
       <p class="muted small" style="margin-top:-6px">Впишите, сколько планируете получить и потратить. Факт считается сам из записей.</p>
-      <div style="margin-bottom:16px"><button type="button" class="btn" id="copy-plan">Скопировать план и накопления из ${L.ymLabel(L.shiftYm(ui.ym, -1)).toLowerCase()}</button></div>
+      <div style="margin-bottom:16px"><button type="button" class="btn" id="copy-plan">Скопировать план из${L.ymLabel(L.shiftYm(ui.ym, -1)).toLowerCase()}</button></div>
       <div class="grid-2">${cards}
         <div class="card"><h3>Накопления</h3>
           <div class="plan-list">
@@ -292,14 +299,23 @@
             ${sv}
           </div>
           <div class="plan-total"><span>Капитал и накопления</span><span id="cap-total">${money(s.savings.capital)}</span></div>
-          <p class="hint">«Отложено в этом месяце» переходит в следующие месяцы как «Накоплено в прошлые месяцы».</p>
+          <p class="hint">Подушку, вклады, дивиденды и крипту достаточно вписать один раз — суммы сами перейдут в следующие месяцы. Изменились — впишите новую сумму в нужном месяце.</p>
+          <p class="hint">«Отложено в этом месяце» копится: в следующих месяцах оно входит в «Накоплено в прошлые месяцы».</p>
         </div>
       </div>`;
   }
 
   function onPlanInput(input) {
     const raw = input.value.trim();
-    const n = raw === '' ? 0 : parseAmount(raw);
+    const isBalance = L.BALANCE_KEYS.includes(input.dataset.sav);
+    // Пустое поле остатка = «брать из прошлого месяца».
+    const n = raw === '' ? (isBalance ? null : 0) : parseAmount(raw);
+    if (n === null) {
+      L.ensureMonth(state, ui.ym).savings[input.dataset.sav] = null;
+      document.getElementById('cap-total').textContent = money(L.monthSummary(state, ui.ym).savings.capital);
+      save();
+      return;
+    }
     if (!Number.isFinite(n) || n < 0) { input.setAttribute('aria-invalid', 'true'); return; }
     input.removeAttribute('aria-invalid');
     const m = L.ensureMonth(state, ui.ym);
@@ -321,7 +337,6 @@
     if (!prev) { toast('В прошлом месяце нет плана'); return; }
     const m = L.ensureMonth(state, ui.ym);
     m.plan = JSON.parse(JSON.stringify(prev.plan));
-    m.savings = Object.assign({}, prev.savings, { current: 0 });
     save();
     render();
     toast('План скопирован');

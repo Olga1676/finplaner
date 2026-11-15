@@ -18,7 +18,7 @@
 
   const BASE_CATEGORIES = {
     'Платежи': ['Жилье', 'Связь и интернет', 'Страхование', 'Абонементы', 'Подписки'],
-    'Расходы': ['Жилье', 'Семейные расходы', 'Личные расходы', 'Транспорт', 'Еда',
+    'Расходы': ['Жилье', 'Семейные расходы', 'Алина','Личные расходы', 'Транспорт', 'Еда',
       'Автомобиль', 'Развлечения и отдых', 'Покупки и вещи', 'Маркетплейсы',
       'Образование и развитие', 'Здоровье'],
     'Долги': ['Кредиты', 'Долги', 'Кредитные карты', 'Ипотека', 'Задолженности'],
@@ -36,6 +36,7 @@
     ['Коммуналка', 'Жилье', 'Расходы'],
     ['Семья', 'Семейные расходы', 'Расходы'],
     ['Домашние животные', 'Семейные расходы', 'Расходы'],
+    ['Алина', 'Алина', 'Расходы'],
     ['Личное', 'Личные расходы', 'Расходы'],
     ['Уход за собой', 'Личные расходы', 'Расходы'],
     ['Благотворительность', 'Личные расходы', 'Расходы'],
@@ -78,6 +79,9 @@
     ['dividends', 'Дивиденды'],
     ['crypto', 'Криптовалюта'],
   ];
+  // Это ОСТАТКИ: вводятся один раз и сами переходят в следующие месяцы, пока их не изменят.
+  // null = «в этом месяце не вводили, берём из прошлого».
+  const BALANCE_KEYS = ['cushion', 'deposits', 'dividends', 'crypto'];
 
   const OTHER = 'Другое';
 
@@ -112,7 +116,7 @@
   function emptyMonth() {
     return {
       plan: { 'Платежи': {}, 'Расходы': {}, 'Долги': {}, 'Поступления': {} },
-      savings: { current: 0, cushion: 0, deposits: 0, dividends: 0, crypto: 0 },
+      savings: { current: 0, cushion: null, deposits: null, dividends: null, crypto: null },
       expenses: [],
       incomes: [],
     };
@@ -166,7 +170,21 @@
       item,
       amount,
       note: String(e.note || '').trim(),
+      by: String(e.by || '').slice(0, 40),
     };
+  }
+
+  /** Собирает state из данных облачной базы (см. sync.js). */
+  function stateFromCloud(raw) {
+    const s = { currency: raw.settings.currency || '₽', months: {},
+      customItems: raw.settings.customItems || [], customIncomeItems: raw.settings.customIncomeItems || [] };
+    raw.months.forEach((m, ym) => { s.months[ym] = { plan: m.plan || {}, savings: m.savings || {}, expenses: [], incomes: [] }; });
+    raw.entries.forEach(e => {
+      const ym = /^\d{4}-\d{2}$/.test(e.ym || '') ? e.ym : String(e.date || '').slice(0, 7);
+      if (!s.months[ym]) s.months[ym] = { plan: {}, savings: {}, expenses: [], incomes: [] };
+      s.months[ym][e.kind === 'income' ? 'incomes' : 'expenses'].push(e);
+    });
+    return normalizeState(s);
   }
 
   /** Приводит загруженные данные к правильной форме. Бросает ошибку, если это не копия планера. */
@@ -184,7 +202,11 @@
         const p = (src.plan && src.plan[g]) || {};
         Object.keys(p).forEach(cat => { const n = toNumber(p[cat]); if (n > 0) m.plan[g][cat] = n; });
       });
-      Object.keys(m.savings).forEach(k => { m.savings[k] = Math.max(0, toNumber(src.savings && src.savings[k])); });
+      Object.keys(m.savings).forEach(k => {
+        const v = src.savings ? src.savings[k] : null;
+        const empty = v === null || v === undefined || v === '';
+        m.savings[k] = BALANCE_KEYS.includes(k) && empty ? null : Math.max(0, toNumber(v));
+      });
       m.expenses = (Array.isArray(src.expenses) ? src.expenses : []).map(normEntry).filter(Boolean);
       m.incomes = (Array.isArray(src.incomes) ? src.incomes : []).map(normEntry).filter(Boolean);
       s.months[ym] = m;
@@ -226,6 +248,23 @@
       .reduce((s, k) => s + toNumber(state.months[k].savings.current), 0);
   }
 
+  /**
+   * Остатки (подушка, вклады, дивиденды, крипта) на месяц:
+   * если в этом месяце вводили — берём их, иначе — из последнего прошлого месяца, где вводили.
+   * carried[k] = true, если значение пришло из прошлого месяца.
+   */
+  function balancesFor(state, ym) {
+    const values = {};
+    const carried = {};
+    const earlier = Object.keys(state.months).filter(k => k <= ym).sort().reverse();
+    BALANCE_KEYS.forEach(k => {
+      const src = earlier.find(key => state.months[key].savings[k] !== null && state.months[key].savings[k] !== undefined);
+      values[k] = src ? toNumber(state.months[src].savings[k]) : 0;
+      carried[k] = !!src && src !== ym;
+    });
+    return { values, carried };
+  }
+
   /** Вся сводка одного месяца: блоки план/факт, остаток, накопления, траты по категориям. */
   function monthSummary(state, ym) {
     const m = getMonth(state, ym);
@@ -248,8 +287,10 @@
     const balancePlan = income.plan - spentPlan;
 
     const prev = savedBefore(state, ym);
-    const sv = m.savings;
-    const capital = prev + sv.current + sv.cushion + sv.deposits + sv.dividends + sv.crypto;
+    const current = toNumber(m.savings.current);
+    const bal = balancesFor(state, ym);
+    const sv = bal.values;
+    const capital = prev + current + sv.cushion + sv.deposits + sv.dividends + sv.crypto;
 
     // Одна и та же категория (например «Жилье») может быть и в платежах, и в расходах — складываем.
     const merged = {};
@@ -275,8 +316,9 @@
       balancePlan,
       savings: {
         prev,
-        current: sv.current, cushion: sv.cushion, deposits: sv.deposits,
+        current, cushion: sv.cushion, deposits: sv.deposits,
         dividends: sv.dividends, crypto: sv.crypto,
+        carried: bal.carried,
         capital,
       },
       endBalance: balanceFact + capital,
@@ -313,10 +355,10 @@
   }
 
   return {
-    MONTHS, GROUPS, INCOME, SAVINGS_FIELDS, OTHER,
+    MONTHS, GROUPS, INCOME, SAVINGS_FIELDS, BALANCE_KEYS, OTHER,
     ymKey, parseYm, shiftYm, ymLabel, newId,
     emptyState, emptyMonth, getMonth, ensureMonth, monthHasData,
     allItems, allIncomeItems, categories, itemInfo, incomeCategory,
-    normalizeState, normEntry, monthSummary, yearSummary,
+    normalizeState, normEntry, stateFromCloud, monthSummary, yearSummary,
   };
 });
