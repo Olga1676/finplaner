@@ -19,6 +19,16 @@
   let state = L.emptyState();
 
   function startCloud() {
+    // Демо-режим для проверки на своём компьютере: http://localhost:8123/?demo — без входа и без базы.
+    if (location.hostname === 'localhost' && new URLSearchParams(location.search).has('demo')) {
+      const noop = () => Promise.resolve();
+      cloud = { saveEntry: noop, deleteEntry: noop, setPlan: noop, setSaving: noop, replaceMonth: noop,
+        setCurrency: noop, addItem: noop, removeItem: noop, importState: noop, signIn: noop, signOut: noop };
+      user = { displayName: 'Демо', email: 'demo@localhost' };
+      mode = 'app';
+      render();
+      return;
+    }
     const config = window.FIREBASE_CONFIG;
     if (!config || !config.apiKey) { mode = 'setup'; render(); return; }
     import('./sync.js').then(mod => {
@@ -73,6 +83,29 @@
     return (v < 0 ? '−' : '') + nf.format(Math.abs(v)) + ' ' + state.currency;
   }
   function pct(x) { return Math.round(x * 100) + '%'; }
+
+  /* ---------- Значки и цвета категорий ---------- */
+  const CAT_STYLE = {
+    'Жилье': ['🏠', '#4c6ef5'], 'Связь и интернет': ['📱', '#15aabf'], 'Страхование': ['🛡️', '#5c7cfa'],
+    'Абонементы': ['🎟️', '#be4bdb'], 'Подписки': ['🔁', '#7950f2'], 'Семейные расходы': ['👨‍👩‍👧', '#f76707'],
+    'Алина': ['👧', '#e64980'], 'Личные расходы': ['💅', '#f06595'], 'Транспорт': ['🚌', '#1c7ed6'],
+    'Еда': ['🍎', '#e03131'], 'Автомобиль': ['🚗', '#495057'], 'Развлечения и отдых': ['🎉', '#ae3ec9'],
+    'Покупки и вещи': ['🛍️', '#d6336c'], 'Маркетплейсы': ['📦', '#f59f00'], 'Образование и развитие': ['📚', '#2f9e44'],
+    'Здоровье': ['💊', '#0ca678'], 'Кредиты': ['💳', '#c92a2a'], 'Долги': ['🧾', '#e8590c'],
+    'Кредитные карты': ['💳', '#a61e4d'], 'Ипотека': ['🏦', '#364fc7'], 'Задолженности': ['⏳', '#868e96'],
+    'Зарплата': ['💼', '#2b8a3e'], 'Пассивный доход': ['🌱', '#37b24d'], 'Прочие поступления': ['✨', '#40c057'],
+  };
+  const EXTRA_COLORS = ['#ff922b', '#22b8cf', '#845ef7', '#f783ac', '#94d82d', '#339af0'];
+  function catStyle(name) {
+    if (CAT_STYLE[name]) return { icon: CAT_STYLE[name][0], color: CAT_STYLE[name][1] };
+    let h = 0;
+    for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return { icon: '•', color: EXTRA_COLORS[h % EXTRA_COLORS.length] };
+  }
+  function catIcon(name) {
+    const st = catStyle(name);
+    return `<span class="cat-ico" style="--c:${st.color}" aria-hidden="true">${st.icon}</span>`;
+  }
   function dateLabel(iso) {
     if (!iso) return 'без даты';
     const [y, m, d] = iso.split('-').map(Number);
@@ -125,8 +158,8 @@
     const max = items[0].amount || 1;
     const total = items.reduce((s, c) => s + c.amount, 0);
     return '<ul class="bars">' + items.map(c =>
-      `<li class="bar-row"><span>${esc(c.name)}</span><span>${money(c.amount)} <span class="muted small">${pct(c.amount / total)}</span></span>` +
-      `<span class="bar-track" aria-hidden="true"><span class="bar-fill ${cls || ''}" style="width:${(c.amount / max * 100).toFixed(1)}%"></span></span></li>`
+      `<li class="bar-row"><span class="bar-name">${catIcon(c.name)}${esc(c.name)}</span><span>${money(c.amount)} <span class="muted small">${pct(c.amount / total)}</span></span>` +
+      `<span class="bar-track" aria-hidden="true"><span class="bar-fill ${cls || ''}" style="width:${(c.amount / max * 100).toFixed(1)}%;background:${catStyle(c.name).color}"></span></span></li>`
     ).join('') + '</ul>';
   }
 
@@ -143,13 +176,13 @@
     return `
       <h2 class="visually-hidden">Обзор за ${L.ymLabel(ui.ym)}</h2>
       <div class="kpis">
-        <div class="kpi"><div class="kpi-label">Поступления</div><div class="kpi-value pos">${money(s.income.fact)}</div>
+        <div class="kpi kpi-income"><div class="kpi-label">💰 Поступления</div><div class="kpi-value pos">${money(s.income.fact)}</div>
           <div class="kpi-sub">план ${money(s.income.plan)}</div></div>
-        <div class="kpi"><div class="kpi-label">Траты</div><div class="kpi-value">${money(s.spent)}</div>
+        <div class="kpi kpi-spend"><div class="kpi-label">🛒 Траты</div><div class="kpi-value">${money(s.spent)}</div>
           <div class="kpi-sub">план ${money(s.spentPlan)}</div></div>
-        <div class="kpi"><div class="kpi-label">Остаток месяца</div><div class="kpi-value ${s.balanceFact < 0 ? 'neg' : ''}">${money(s.balanceFact)}</div>
+        <div class="kpi kpi-balance"><div class="kpi-label">👛 Остаток месяца</div><div class="kpi-value ${s.balanceFact < 0 ? 'neg' : ''}">${money(s.balanceFact)}</div>
           <div class="kpi-sub">поступления − траты</div></div>
-        <div class="kpi"><div class="kpi-label">Капитал и накопления</div><div class="kpi-value">${money(s.savings.capital)}</div>
+        <div class="kpi kpi-save"><div class="kpi-label">🐷 Капитал и накопления</div><div class="kpi-value">${money(s.savings.capital)}</div>
           <div class="kpi-sub">на конец месяца: ${money(s.endBalance)}</div></div>
       </div>
 
@@ -205,11 +238,11 @@
     const items = sorted.map(e => {
       const info = isInc ? { category: L.incomeCategory(state, e.item), group: 'Поступления' } : L.itemInfo(state, e.item);
       return `<li class="entry${e.id === ui.editId ? ' editing' : ''}">
-        <div class="entry-main"><div class="entry-title">${esc(e.item)}</div>
-          <div class="entry-meta">${isInc ? '' : `<span class="tag">${esc(info.group)}</span>`}${esc(info.category)} · ${dateLabel(e.date)}${e.note ? ' · ' + esc(e.note) : ''}${e.by ? ' · <b>' + esc(e.by) + '</b>' : ''}</div></div>
+        <div class="entry-main">${catIcon(info.category)}<div><div class="entry-title">${esc(e.item)}</div>
+          <div class="entry-meta">${isInc ? '' : `<span class="tag">${esc(info.group)}</span>`}${esc(info.category)} · ${dateLabel(e.date)}${e.note ? ' · ' + esc(e.note) : ''}${e.by ? ' · <b>' + esc(e.by) + '</b>' : ''}</div></div></div>
         <div class="entry-amount ${isInc ? 'pos' : ''}">${money(e.amount)}</div>
         <div class="entry-actions">
-          <button type="button" class="btn btn-small" data-edit="${esc(e.id)}" aria-label="Изменить: ${esc(e.item)}, ${money(e.amount)}">Изм.</button>
+          <button type="button" class="btn btn-small" data-edit="${esc(e.id)}" aria-label="Изменить: ${esc(e.item)}, ${money(e.amount)}">✏️</button>
           <button type="button" class="btn btn-small btn-danger" data-del="${esc(e.id)}" aria-label="Удалить: ${esc(e.item)}, ${money(e.amount)}">✕</button>
         </div></li>`;
     }).join('');
@@ -271,6 +304,7 @@
     const wasEdit = !!ui.editId;
     ui.editId = null;
     cloud.saveEntry(ui.kind, entry);
+    window.Sounds && Sounds.play(ui.kind === 'income' ? 'income' : 'expense');
     if (target !== ui.ym) toast(`Сохранено в ${L.ymLabel(target).toLowerCase()}`);
     else toast(wasEdit ? 'Запись изменена' : 'Запись добавлена');
     render();
@@ -368,6 +402,7 @@
     const m = L.ensureMonth(state, ui.ym);
     m.plan = JSON.parse(JSON.stringify(prev.plan));
     cloud.replaceMonth(ui.ym, m.plan, m.savings);
+    window.Sounds && Sounds.play('save');
     render();
     toast('План скопирован');
   }
@@ -388,11 +423,11 @@
       <td class="num ${m.balance < 0 ? 'neg' : ''}">${money(m.balance)}</td></tr>`).join('');
     return `
       <div class="kpis">
-        <div class="kpi"><div class="kpi-label">Поступления за год</div><div class="kpi-value pos">${money(t.income)}</div></div>
-        <div class="kpi"><div class="kpi-label">Траты за год</div><div class="kpi-value">${money(t.spent)}</div>
+        <div class="kpi kpi-income"><div class="kpi-label">💰 Поступления за год</div><div class="kpi-value pos">${money(t.income)}</div></div>
+        <div class="kpi kpi-spend"><div class="kpi-label">🛒 Траты за год</div><div class="kpi-value">${money(t.spent)}</div>
           <div class="kpi-sub">${t.income > 0 ? pct(t.spent / t.income) + ' от поступлений' : ''}</div></div>
-        <div class="kpi"><div class="kpi-label">Остаток за год</div><div class="kpi-value ${t.balance < 0 ? 'neg' : ''}">${money(t.balance)}</div></div>
-        <div class="kpi"><div class="kpi-label">Капитал и накопления</div><div class="kpi-value">${money(y.capital)}</div>
+        <div class="kpi kpi-balance"><div class="kpi-label">👛 Остаток за год</div><div class="kpi-value ${t.balance < 0 ? 'neg' : ''}">${money(t.balance)}</div></div>
+        <div class="kpi kpi-save"><div class="kpi-label">🐷 Капитал и накопления</div><div class="kpi-value">${money(y.capital)}</div>
           <div class="kpi-sub">на последний месяц с данными</div></div>
       </div>
 
@@ -445,6 +480,14 @@
           <p class="error full" id="ni-error" role="alert" hidden></p>
         </form>
         ${custom ? `<ul class="entries" style="margin-top:12px">${custom}</ul>` : '<p class="hint">Своих статей пока нет — используются стандартные из таблицы.</p>'}
+      </section>
+
+      <section class="section">
+        <h2>Звуки</h2>
+        <div class="card"><label class="switch-row" for="sound-toggle">
+          <span>Звук при добавлении и удалении записей</span>
+          <input type="checkbox" id="sound-toggle" class="switch" ${window.Sounds && Sounds.enabled() ? 'checked' : ''}>
+        </label></div>
       </section>
 
       <section class="section">
@@ -660,6 +703,7 @@
       m[key] = m[key].filter(x => x.id !== entry.id);
       if (ui.editId === entry.id) ui.editId = null;
       cloud.deleteEntry(entry.id);
+      window.Sounds && Sounds.play('delete');
       render();
       toast('Запись удалена');
       return;
@@ -690,6 +734,11 @@
     if (e.target.id === 'currency') { state.currency = e.target.value; cloud.setCurrency(e.target.value); toast('Валюта изменена'); }
     if (e.target.matches('[data-plan-group], [data-sav]')) commitPlanInput(e.target);
     if (e.target.id === 'ni-group') fillCats();
+    if (e.target.id === 'sound-toggle' && window.Sounds) {
+      Sounds.setEnabled(e.target.checked);
+      if (e.target.checked) Sounds.play('income');
+      toast(e.target.checked ? 'Звуки включены' : 'Звуки выключены');
+    }
     if (e.target.id === 'import' && e.target.files[0]) { importData(e.target.files[0]); e.target.value = ''; }
   });
   // Обновляем итоги «Обзора», когда возвращаемся с поля плана.

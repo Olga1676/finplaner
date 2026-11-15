@@ -3,11 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#16181a" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#228be6">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Планер">
   <title>Финансовый планер</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -15,7 +19,7 @@
 
   <header class="top">
     <div class="top-row">
-      <h1 class="brand">Финансовый планер</h1>
+      <div class="brand"><img src="icons/icon-192.png" alt="" class="brand-icon"><h1>Финансовый планер</h1></div>
       <div class="period" role="group" aria-label="Выбор периода">
         <button class="icon-btn" id="prev" type="button" aria-label="Предыдущий период">‹</button>
         <span class="period-label" id="period-label" aria-live="polite"></span>
@@ -23,11 +27,11 @@
       </div>
     </div>
     <nav class="tabs" aria-label="Разделы">
-      <button type="button" class="tab" data-tab="overview">Обзор</button>
-      <button type="button" class="tab" data-tab="entries">Записи</button>
-      <button type="button" class="tab" data-tab="plan">План</button>
-      <button type="button" class="tab" data-tab="year">Год</button>
-      <button type="button" class="tab" data-tab="settings">Ещё</button>
+      <button type="button" class="tab" data-tab="overview"><span class="tab-ico" aria-hidden="true">📊</span>Обзор</button>
+      <button type="button" class="tab" data-tab="entries"><span class="tab-ico" aria-hidden="true">✏️</span>Записи</button>
+      <button type="button" class="tab" data-tab="plan"><span class="tab-ico" aria-hidden="true">🎯</span>План</button>
+      <button type="button" class="tab" data-tab="year"><span class="tab-ico" aria-hidden="true">📅</span>Год</button>
+      <button type="button" class="tab" data-tab="settings"><span class="tab-ico" aria-hidden="true">⚙️</span>Ещё</button>
     </nav>
   </header>
 
@@ -37,6 +41,13 @@
 
   <script src="firebase-config.js"></script>
   <script src="logic.js"></script>
+  <script src="sounds.js"></script>
   <script src="app.js"></script>
+  <script>
+    // Сохраняем приложение в телефоне, чтобы оно открывалось без интернета.
+    if ('serviceWorker' in navigator && location.protocol === 'https:') {
+      window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+    }
+  </script>
 </body>
 </html>
