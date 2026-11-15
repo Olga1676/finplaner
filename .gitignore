@@ -1,0 +1,7 @@
+# Личные файлы — не выкладывать в интернет
+*.xlsx
+*.xls
+*.json
+data.js
+.claude/
+.DS_Store
