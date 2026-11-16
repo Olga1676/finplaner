@@ -135,12 +135,18 @@
     return Object.values(m.plan).some(g => Object.values(g).some(v => v));
   }
 
-  function allItems(state) { return BASE_ITEMS.concat(state.customItems || []); }
+  // Статьи, которые есть только в семейной книге (у личной книги дочери их нет).
+  const FAMILY_ONLY = ['Алина'];
+  const isPersonal = state => state.profile === 'personal';
+  function allItems(state) {
+    const base = isPersonal(state) ? BASE_ITEMS.filter(i => !FAMILY_ONLY.includes(i.category)) : BASE_ITEMS;
+    return base.concat(state.customItems || []);
+  }
   function allIncomeItems(state) { return BASE_INCOME_ITEMS.concat(state.customIncomeItems || []); }
 
   /** Список категорий блока: стандартные + добавленные своими статьями. */
   function categories(state, group) {
-    const list = BASE_CATEGORIES[group].slice();
+    const list = BASE_CATEGORIES[group].filter(c => !(isPersonal(state) && FAMILY_ONLY.includes(c)));
     const custom = group === INCOME ? (state.customIncomeItems || [])
       : (state.customItems || []).filter(i => i.group === group);
     custom.forEach(i => { if (!list.includes(i.category)) list.push(i.category); });
@@ -177,8 +183,8 @@
   }
 
   /** Собирает state из данных облачной базы (см. sync.js). */
-  function stateFromCloud(raw) {
-    const s = { currency: raw.settings.currency || '₽', months: {},
+  function stateFromCloud(raw, profile) {
+    const s = { currency: raw.settings.currency || '₽', months: {}, profile: profile || 'family',
       customItems: raw.settings.customItems || [], customIncomeItems: raw.settings.customIncomeItems || [] };
     raw.months.forEach((m, ym) => { s.months[ym] = { plan: m.plan || {}, savings: m.savings || {}, expenses: [], incomes: [] }; });
     raw.entries.forEach(e => {
@@ -196,6 +202,7 @@
     }
     const s = emptyState();
     if (typeof raw.currency === 'string' && raw.currency.trim()) s.currency = raw.currency.trim().slice(0, 4);
+    if (raw.profile === 'personal') s.profile = 'personal';
     Object.keys(raw.months).forEach(ym => {
       if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(ym)) return;
       const src = raw.months[ym] || {};

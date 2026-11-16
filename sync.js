@@ -33,42 +33,69 @@ export function createSync(config, handlers) {
   let unsubs = [];
   let user = null;
 
+  // Чья книга открыта: 'family' — семейная (корень базы), 'personal' — личная книга (spaces/<email>).
+  // Кто не входит в семью, автоматически попадает в свою личную книгу.
+  let space = 'family';
+  let generation = 0;
+  const P = (...segs) => (space === 'personal' ? ['spaces', (user.email || '').toLowerCase()] : []).concat(segs);
+  const spaceKey = () => 'finplaner-space-' + (user ? user.uid : '');
+  function rememberSpace() { try { localStorage.setItem(spaceKey(), space); } catch (e) { /* не важно */ } }
+
   function emit() {
-    handlers.onData(raw, ready.entries && ready.months && ready.settings);
+    handlers.onData(raw, ready.entries && ready.months && ready.settings, space);
   }
   function fail(err) {
     handlers.onError(err && err.code === 'permission-denied' ? 'denied' : 'error', err);
   }
+  // Ошибка чтения: если семейная книга закрыта для этого человека — открываем его личную.
+  function readFail(gen) {
+    return err => {
+      if (gen !== generation) return;              // ошибка от старой подписки
+      if (err && err.code === 'permission-denied' && space === 'family') {
+        space = 'personal';
+        rememberSpace();
+        subscribe();
+        return;
+      }
+      fail(err);
+    };
+  }
 
   function subscribe() {
+    generation += 1;
+    const gen = generation;
+    const onErr = readFail(gen);
     unsubs.forEach(u => u());
     raw.entries.clear(); raw.months.clear(); raw.settings = {};
     ready = { entries: false, months: false, settings: false };
     unsubs = [
-      onSnapshot(collection(db, 'entries'), snap => {
+      onSnapshot(collection(db, ...P('entries')), snap => {
         snap.docChanges().forEach(ch => {
           if (ch.type === 'removed') raw.entries.delete(ch.doc.id);
           else raw.entries.set(ch.doc.id, Object.assign({ id: ch.doc.id }, ch.doc.data()));
         });
         ready.entries = true; emit();
-      }, fail),
-      onSnapshot(collection(db, 'months'), snap => {
+      }, onErr),
+      onSnapshot(collection(db, ...P('months')), snap => {
         snap.docChanges().forEach(ch => {
           if (ch.type === 'removed') raw.months.delete(ch.doc.id);
           else raw.months.set(ch.doc.id, ch.doc.data());
         });
         ready.months = true; emit();
-      }, fail),
-      onSnapshot(doc(db, 'settings', 'main'), snap => {
+      }, onErr),
+      onSnapshot(doc(db, ...P('settings', 'main')), snap => {
         raw.settings = snap.exists() ? snap.data() : {};
         ready.settings = true; emit();
-      }, fail),
+      }, onErr),
     ];
   }
 
   onAuthStateChanged(auth, u => {
     user = u;
-    if (u) subscribe();
+    if (u) {
+      try { space = localStorage.getItem(spaceKey()) === 'personal' ? 'personal' : 'family'; } catch (e) { space = 'family'; }
+      subscribe();
+    }
     else { unsubs.forEach(f => f()); unsubs = []; }
     handlers.onAuth(u);
   });
@@ -100,27 +127,27 @@ export function createSync(config, handlers) {
         item: entry.item, amount: entry.amount, note: entry.note || '',
         by: entry.by || who(), updatedAt: serverTimestamp(),
       };
-      return report(setDoc(doc(db, 'entries', entry.id), data));
+      return report(setDoc(doc(db, ...P('entries', entry.id)), data));
     },
-    deleteEntry(id) { return report(deleteDoc(doc(db, 'entries', id))); },
+    deleteEntry(id) { return report(deleteDoc(doc(db, ...P('entries', id)))); },
 
     setPlan(ym, group, cat, n) {
-      return report(setDoc(doc(db, 'months', ym),
+      return report(setDoc(doc(db, ...P('months', ym)),
         { plan: { [group]: { [cat]: n > 0 ? n : deleteField() } } }, { merge: true }));
     },
     setSaving(ym, key, n) {
-      return report(setDoc(doc(db, 'months', ym), { savings: { [key]: n } }, { merge: true }));
+      return report(setDoc(doc(db, ...P('months', ym)), { savings: { [key]: n } }, { merge: true }));
     },
     replaceMonth(ym, plan, savings) {
-      return report(setDoc(doc(db, 'months', ym), { plan, savings }));
+      return report(setDoc(doc(db, ...P('months', ym)), { plan, savings }));
     },
 
-    setCurrency(c) { return report(setDoc(doc(db, 'settings', 'main'), { currency: c }, { merge: true })); },
+    setCurrency(c) { return report(setDoc(doc(db, ...P('settings', 'main')), { currency: c }, { merge: true })); },
     addItem(field, item) {
-      return report(setDoc(doc(db, 'settings', 'main'), { [field]: arrayUnion(item) }, { merge: true }));
+      return report(setDoc(doc(db, ...P('settings', 'main')), { [field]: arrayUnion(item) }, { merge: true }));
     },
     removeItem(field, item) {
-      return report(setDoc(doc(db, 'settings', 'main'), { [field]: arrayRemove(item) }, { merge: true }));
+      return report(setDoc(doc(db, ...P('settings', 'main')), { [field]: arrayRemove(item) }, { merge: true }));
     },
 
     /** Загрузка резервной копии: добавляет все записи, план и настройки (пачками по 400). */
@@ -128,13 +155,13 @@ export function createSync(config, handlers) {
       const ops = [];
       Object.keys(state.months).forEach(ym => {
         const m = state.months[ym];
-        ops.push(b => b.set(doc(db, 'months', ym), { plan: m.plan, savings: m.savings }));
-        m.expenses.forEach(e => ops.push(b => b.set(doc(db, 'entries', e.id),
+        ops.push(b => b.set(doc(db, ...P('months', ym)), { plan: m.plan, savings: m.savings }));
+        m.expenses.forEach(e => ops.push(b => b.set(doc(db, ...P('entries', e.id)),
           { kind: 'expense', ym, date: e.date, item: e.item, amount: e.amount, note: e.note, by: e.by || who() })));
-        m.incomes.forEach(e => ops.push(b => b.set(doc(db, 'entries', e.id),
+        m.incomes.forEach(e => ops.push(b => b.set(doc(db, ...P('entries', e.id)),
           { kind: 'income', ym, date: e.date, item: e.item, amount: e.amount, note: e.note, by: e.by || who() })));
       });
-      ops.push(b => b.set(doc(db, 'settings', 'main'), {
+      ops.push(b => b.set(doc(db, ...P('settings', 'main')), {
         currency: state.currency, customItems: state.customItems, customIncomeItems: state.customIncomeItems,
       }));
       for (let i = 0; i < ops.length; i += 400) {

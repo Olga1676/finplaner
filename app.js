@@ -25,6 +25,7 @@
       cloud = { saveEntry: noop, deleteEntry: noop, setPlan: noop, setSaving: noop, replaceMonth: noop,
         setCurrency: noop, addItem: noop, removeItem: noop, importState: noop, signIn: noop, signOut: noop };
       user = { displayName: 'Демо', email: 'demo@localhost' };
+      if (new URLSearchParams(location.search).has('personal')) state.profile = 'personal';
       mode = 'app';
       render();
       return;
@@ -38,8 +39,8 @@
           mode = u ? 'loading' : 'login';
           render();
         },
-        onData(raw, complete) {
-          state = L.stateFromCloud(raw);
+        onData(raw, complete, space) {
+          state = L.stateFromCloud(raw, space === 'personal' ? 'personal' : 'family');
           if (complete && mode === 'loading') mode = 'app';
           if (mode === 'app') renderKeepingInput();
         },
@@ -528,7 +529,7 @@
         <h2>Аккаунт</h2>
         <div class="card">
           <p class="small" style="margin-top:0">Вы вошли как <b>${esc((user && (user.displayName || user.email)) || '')}</b>${user && user.displayName ? ' (' + esc(user.email) + ')' : ''}.
-          Записи хранятся в общей базе и видны только вам двоим.</p>
+          ${state.profile === 'personal' ? 'Это ваша личная книга: записи видны только вам.' : 'Это семейная книга: записи видны только членам семьи.'}</p>
           <button type="button" class="btn" id="sign-out">Выйти</button>
         </div>
       </section>
