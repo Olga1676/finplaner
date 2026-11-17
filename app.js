@@ -154,14 +154,43 @@
       <tfoot><tr><td>Итого</td><td class="num">${money(block.plan)}</td><td class="num">${money(block.fact)}</td></tr></tfoot></table></div>`;
   }
 
-  function barsList(items, cls) {
+  /** Записи за месяц (или за весь год, если ym — это число-год), сгруппированные по категориям. */
+  function entriesByCategory(ym, income) {
+    const yms = typeof ym === 'number'
+      ? Array.from({ length: 12 }, (_, i) => L.ymKey(ym, i + 1)) : [ym];
+    const out = {};
+    yms.forEach(k => {
+      const m = L.getMonth(state, k);
+      (income ? m.incomes : m.expenses).forEach(e => {
+        const cat = income ? L.incomeCategory(state, e.item) : L.itemInfo(state, e.item).category;
+        (out[cat] = out[cat] || []).push(e);
+      });
+    });
+    Object.values(out).forEach(list => list.sort((a, b) => (b.date || '').localeCompare(a.date || '')));
+    return out;
+  }
+
+  // Какие категории пользователь раскрыл — чтобы они не закрывались при обновлении экрана.
+  const openCats = new Set();
+
+  function barsList(items, cls, groups, scope) {
     if (!items.length) return '<p class="muted small">Пока нет данных.</p>';
     const max = items[0].amount || 1;
     const total = items.reduce((s, c) => s + c.amount, 0);
-    return '<ul class="bars">' + items.map(c =>
-      `<li class="bar-row"><span class="bar-name">${catIcon(c.name)}${esc(c.name)}</span><span>${money(c.amount)} <span class="muted small">${pct(c.amount / total)}</span></span>` +
-      `<span class="bar-track" aria-hidden="true"><span class="bar-fill ${cls || ''}" style="width:${(c.amount / max * 100).toFixed(1)}%;background:${catStyle(c.name).color}"></span></span></li>`
-    ).join('') + '</ul>';
+    return '<ul class="bars">' + items.map(c => {
+      const key = scope + '|' + c.name;
+      const list = (groups && groups[c.name]) || [];
+      const head = `<span class="bar-name">${catIcon(c.name)}${esc(c.name)}${list.length ? ` <span class="muted small">· ${list.length}</span>` : ''}</span>` +
+        `<span>${money(c.amount)} <span class="muted small">${pct(c.amount / total)}</span></span>` +
+        `<span class="bar-track" aria-hidden="true"><span class="bar-fill ${cls || ''}" style="width:${(c.amount / max * 100).toFixed(1)}%;background:${catStyle(c.name).color}"></span></span>`;
+      if (!list.length) return `<li class="bar-row">${head}</li>`;
+      const rows = list.map(e => `<li><div><div>${esc(e.item)}</div>
+          <div class="muted small">${dateLabel(e.date)}${e.note ? ' · ' + esc(e.note) : ''}${e.by ? ' · ' + esc(e.by) : ''}</div></div>
+          <b>${money(e.amount)}</b></li>`).join('');
+      return `<li><details class="bar-details" data-cat="${esc(key)}"${openCats.has(key) ? ' open' : ''}>
+        <summary class="bar-row">${head}</summary>
+        <ul class="bar-entries">${rows}</ul></details></li>`;
+    }).join('') + '</ul>';
   }
 
   function renderOverview() {
@@ -197,7 +226,7 @@
 
       <section class="section">
         <h2>Траты по категориям</h2>
-        <div class="card">${barsList(s.byCategory, 'spend')}</div>
+        <div class="card">${barsList(s.byCategory, 'spend', entriesByCategory(ui.ym), 'm' + ui.ym)}</div>
       </section>
 
       <section class="section">
@@ -469,8 +498,8 @@
       </section>
 
       <div class="grid-2">
-        <section class="card"><h3>Траты по категориям</h3>${barsList(y.byCategory, 'spend')}</section>
-        <section class="card"><h3>Поступления по категориям</h3>${barsList(y.byIncomeCategory)}</section>
+        <section class="card"><h3>Траты по категориям</h3>${barsList(y.byCategory, 'spend', entriesByCategory(y.year), 'y' + y.year)}</section>
+        <section class="card"><h3>Поступления по категориям</h3>${barsList(y.byIncomeCategory, '', entriesByCategory(y.year, true), 'yi' + y.year)}</section>
       </div>`;
   }
 
@@ -775,6 +804,11 @@
     }
   });
 
+  main.addEventListener('toggle', e => {
+    const d = e.target;
+    if (!d.matches || !d.matches('details[data-cat]')) return;
+    if (d.open) openCats.add(d.dataset.cat); else openCats.delete(d.dataset.cat);
+  }, true);
   main.addEventListener('submit', e => {
     e.preventDefault();
     if (e.target.id === 'entry-form') submitEntry(e.target);

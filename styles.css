@@ -184,6 +184,13 @@ h3 { font-size: 1rem; margin: 0 0 10px; }
 .bar-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; align-items: center; font-size: 0.93rem; }
 .bar-name { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .bar-track { grid-column: 1 / -1; height: 10px; background: var(--surface-2); border-radius: 99px; overflow: hidden; }
+.bar-details > summary { list-style: none; cursor: pointer; border-radius: 10px; padding: 4px 6px; margin: -4px -6px; }
+.bar-details > summary::-webkit-details-marker { display: none; }
+.bar-details > summary:hover { background: var(--surface-2); }
+.bar-details > summary .bar-name::after { content: '▸'; color: var(--muted); margin-left: auto; transition: transform .2s; }
+.bar-details[open] > summary .bar-name::after { transform: rotate(90deg); }
+.bar-entries { list-style: none; margin: 10px 0 4px; padding: 0 0 0 12px; border-left: 3px solid var(--surface-2); display: grid; gap: 8px; font-size: 0.9rem; }
+.bar-entries li { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
 .bar-fill { display: block; height: 100%; background: var(--bar); border-radius: 99px; }
 
 /* Столбики по месяцам */
